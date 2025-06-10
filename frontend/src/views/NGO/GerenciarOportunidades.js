@@ -64,7 +64,11 @@ export default function GerenciarOportunidades() {
     const [isFormModalOpen, setIsFormModalOpen] = useState(false);
     const [modalInitialValues, setModalInitialValues] = useState(null);
     const [isModalSubmitting, setIsModalSubmitting] = useState(false);
-    const [modalFormAlert, setModalFormAlert] = useState(null);
+    // Estado para exibir alertas DENTRO do modal (agora gerenciado pelo OportunidadeFormModal para algumas mensagens)
+    const [modalFormAlert, setModalFormAlert] = useState(null); 
+    // Estado para exibir alertas FORA do modal (após fechar, ex: sucesso/erro de exclusão)
+    const [mainPageAlert, setMainPageAlert] = useState(null);
+
 
     // --- Função para Carregar Oportunidades ---
     const loadOpportunities = async () => {
@@ -73,9 +77,14 @@ export default function GerenciarOportunidades() {
         try {
             const res = await fetchOpportunities();
             setOpportunities(res.data);
+            // Limpa o alerta da página principal se a carga foi bem-sucedida
+            if (mainPageAlert?.severity === 'success' || mainPageAlert?.severity === 'error') {
+                setMainPageAlert(null);
+            }
         } catch (err) {
             console.error("Erro ao carregar oportunidades:", err);
             setErrorOpportunities(err.message);
+            setMainPageAlert({ severity: 'error', message: `Erro ao carregar oportunidades: ${err.message}` });
         } finally {
             setIsLoadingOpportunities(false);
         }
@@ -84,61 +93,89 @@ export default function GerenciarOportunidades() {
     // --- Handler para submissão do formulário no Modal (Criação/Edição) ---
     const handleFormSubmit = async (values) => {
         setIsModalSubmitting(true);
-        setModalFormAlert(null);
-        try {
-            let response;
-            if (modalInitialValues && modalInitialValues.id) {
-                response = await updateOpportunity(modalInitialValues.id, values);
-                if (response.data && response.data.success) {
-                    setModalFormAlert({ severity: 'success', message: 'Oportunidade atualizada com sucesso!' });
+        setModalFormAlert(null); // Limpa alertas internos antes de submeter
+        setMainPageAlert(null); // Limpa alertas da página principal para não confundir
+
+        return new Promise(async (resolve, reject) => { // Retorna uma Promise para o OportunidadeFormModal aguardar
+            try {
+                let response;
+                if (modalInitialValues && modalInitialValues.id) {
+                    // Lógica para atualização de oportunidade
+                    response = await updateOpportunity(modalInitialValues.id, values);
+                    if (response.data && response.data.success) {
+                        setModalFormAlert({ severity: 'success', message: 'Oportunidade atualizada com sucesso!' });
+                        setMainPageAlert({ severity: 'success', message: 'Oportunidade atualizada com sucesso!' }); // Alerta na página principal
+                        console.log('Oportunidade atualizada com sucesso no backend.');
+                    } else {
+                        const msg = response.data?.detail || response.data?.error || 'Falha ao atualizar oportunidade.';
+                        setModalFormAlert({ severity: 'error', message: `Erro: ${msg}` });
+                        setMainPageAlert({ severity: 'error', message: `Erro ao atualizar oportunidade: ${msg}` });
+                        console.error('Falha ao atualizar oportunidade no backend:', msg);
+                        reject(new Error(msg)); // Rejeita a promise em caso de falha
+                        return;
+                    }
                 } else {
-                    setModalFormAlert({ severity: 'error', message: 'Falha ao atualizar oportunidade.' });
+                    // Lógica para criação de nova oportunidade
+                    response = await createOpportunity(values);
+                    if (response.data && response.data.success) {
+                        setModalFormAlert({ severity: 'success', message: 'Oportunidade publicada com sucesso!' });
+                        setMainPageAlert({ severity: 'success', message: 'Oportunidade publicada com sucesso!' }); // Alerta na página principal
+                        console.log('Nova oportunidade publicada com sucesso no backend.');
+                    } else {
+                        const msg = response.data?.detail || response.data?.error || 'Falha ao publicar oportunidade.';
+                        setModalFormAlert({ severity: 'error', message: `Erro: ${msg}` });
+                        setMainPageAlert({ severity: 'error', message: `Erro ao publicar oportunidade: ${msg}` });
+                        console.error('Falha ao publicar oportunidade no backend:', msg);
+                        reject(new Error(msg)); // Rejeita a promise em caso de falha
+                        return;
+                    }
                 }
-            } else {
-                response = await createOpportunity(values);
-                if (response.data && response.data.success) {
-                    setModalFormAlert({ severity: 'success', message: 'Oportunidade publicada com sucesso!' });
-                } else {
-                    setModalFormAlert({ severity: 'error', message: 'Falha ao publicar oportunidade.' });
-                }
+                
+                // Se chegou até aqui, a operação foi bem-sucedida.
+                await loadOpportunities(); // Recarrega a lista de oportunidades
+                resolve(response); // Resolve a promise para que o modal saiba que a submissão foi bem-sucedida
+
+            } catch (error) {
+                // Captura erros de rede ou outros erros não tratados pelas respostas do backend
+                const msg = error.response?.data?.detail || error.response?.data?.error || error.message || 'Erro desconhecido.';
+                setModalFormAlert({ severity: 'error', message: `Erro: ${msg}` });
+                setMainPageAlert({ severity: 'error', message: `Erro na submissão: ${msg}` });
+                console.error("Erro na submissão do formulário:", error);
+                reject(error); // Rejeita a promise
+            } finally {
+                setIsModalSubmitting(false);
+                // Não fechamos o modal aqui; o OportunidadeFormModal agora gerencia o fechamento com delay.
+                // Resetamos os valores iniciais e o alerta do modal APENAS quando o modal é fechado pela prop onClose.
             }
-            await loadOpportunities();
-            setTimeout(() => {
-                setIsFormModalOpen(false);
-                setModalInitialValues(null);
-                setModalFormAlert(null);
-            }, 1500);
-        } catch (error) {
-            const msg = error.response?.data?.detail || error.response?.data?.error || error.message || 'Erro desconhecido.';
-            setModalFormAlert({ severity: 'error', message: `Erro: ${msg}` });
-        } finally {
-            setIsModalSubmitting(false);
-        }
+        });
     };
 
     // --- Função para Abrir Modal em Modo Edição ---
     const handleEditClick = (opportunity) => {
         setModalInitialValues(opportunity);
+        setModalFormAlert(null); // Limpa qualquer alerta anterior do modal
         setIsFormModalOpen(true);
     };
 
     // --- Função para Excluir Vaga ---
     const handleDeleteClick = async (opportunityId) => {
         if (window.confirm('Tem certeza que deseja excluir esta oportunidade?')) {
+            setMainPageAlert(null); // Limpa alertas anteriores
             try {
                 await deleteOpportunity(opportunityId);
-                setModalFormAlert({ severity: 'success', message: 'Oportunidade excluída com sucesso!' });
-                loadOpportunities();
+                setMainPageAlert({ severity: 'success', message: 'Oportunidade excluída com sucesso!' });
+                await loadOpportunities(); // Recarrega a lista
             } catch (error) {
                 const msg = error.response?.data?.detail || error.response?.data?.error || error.message || 'Erro desconhecido.';
-                setModalFormAlert({ severity: 'error', message: `Erro ao excluir: ${msg}` });
+                setMainPageAlert({ severity: 'error', message: `Erro ao excluir: ${msg}` });
+                console.error("Erro ao excluir oportunidade:", error);
             }
         }
     };
 
     // --- Efeito para carregar oportunidades ao montar o componente ---
     useEffect(() => {
-    loadOpportunities();
+        loadOpportunities();
     }, []);
 
     // --- Renderização do Componente ---
@@ -163,19 +200,20 @@ export default function GerenciarOportunidades() {
                         fontSize: '0.9rem'
                     }}
                     onClick={() => {
-                        setModalInitialValues(null);
-                        setModalFormAlert(null);
+                        setModalInitialValues(null); // Para garantir que é um formulário de criação
+                        setModalFormAlert(null); // Limpa alertas internos do modal
+                        setMainPageAlert(null); // Limpa alertas da página principal
                         setIsFormModalOpen(true);
                     }}
                 >
-                    CADASTRAR NOVA OPORTUNIDADE
+                    CADASTRAR NOVA OPORTUNIDADE {/* Alterado o texto do botão */}
                 </Button>
             </Box>
 
-            {/* Mensagem de alerta da página principal */}
-            {modalFormAlert && !isFormModalOpen && (
-                <Alert severity={modalFormAlert.severity} sx={{ mb: 2 }}>
-                    {modalFormAlert.message}
+            {/* Mensagem de alerta da página principal (fora do modal) */}
+            {mainPageAlert && (
+                <Alert severity={mainPageAlert.severity} sx={{ mb: 2 }}>
+                    {mainPageAlert.message}
                 </Alert>
             )}
 
@@ -316,11 +354,18 @@ export default function GerenciarOportunidades() {
             {/* Renderiza o Modal do Formulário */}
             <OportunidadeFormModal
                 isOpen={isFormModalOpen}
-                onClose={() => setIsFormModalOpen(false)}
+                onClose={() => {
+                    // Limpar valores e alertas ao fechar o modal
+                    setIsFormModalOpen(false);
+                    setModalInitialValues(null);
+                    setModalFormAlert(null); // Limpa alerta interno do modal ao fechar
+                    console.log('Modal fechado.'); // Log para o fechamento
+                }}
                 onSubmit={handleFormSubmit}
                 initialValues={modalInitialValues}
                 isSubmitting={isModalSubmitting}
                 formAlert={modalFormAlert}
+                setFormAlert={setModalFormAlert} 
             />
         </div>
     );

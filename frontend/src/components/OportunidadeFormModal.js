@@ -44,7 +44,7 @@ const opportunityValidationSchema = Yup.object().shape({
     data_inicio: Yup.string()
         .matches(
             /^(0[1-9]|[12][0-9]|3[01])\/(0[1-9]|1[0-2])\/\d{4}$/,
-            'Insira uma data válida.' // <--- MENSAGEM ATUALIZADA AQUI!
+            'Insira uma data válida (DD/MM/AAAA).'
         )
         .nullable()
         .test(
@@ -70,7 +70,7 @@ const opportunityValidationSchema = Yup.object().shape({
     data_termino: Yup.string()
         .matches(
             /^(0[1-9]|[12][0-9]|3[01])\/(0[1-9]|1[0-2])\/\d{4}$/,
-            'Insira uma data válida.' // <--- MENSAGEM ATUALIZADA AQUI!
+            'Insira uma data válida (DD/MM/AAAA).'
         )
         .nullable()
         .test(
@@ -98,7 +98,7 @@ const opportunityValidationSchema = Yup.object().shape({
     hora_inicio: Yup.string()
         .matches(
             /^([01]\d|2[0-3]):([0-5]\d)$/,
-            'Insira um horário válido.' // Apenas adicionei o formato para clareza
+            'Insira um horário válido (HH:MM).'
         )
         .nullable()
         .test(
@@ -116,7 +116,7 @@ const opportunityValidationSchema = Yup.object().shape({
     hora_termino: Yup.string()
         .matches(
             /^([01]\d|2[0-3]):([0-5]\d)$/,
-            'Insira um horário válido.' // Apenas adicionei o formato para clareza
+            'Insira um horário válido (HH:MM).'
         )
         .nullable()
         .test(
@@ -185,7 +185,10 @@ const MaskedInputCustom = React.forwardRef(function MaskedInputCustom(props, ref
     );
 });
 
-export default function OportunidadeFormModal({ isOpen, onClose, onSubmit, initialValues, isSubmitting, formAlert }) {
+export default function OportunidadeFormModal({ isOpen, onClose, onSubmit, initialValues, isSubmitting, formAlert, setFormAlert }) {
+    // Estado para armazenar os valores originais da oportunidade para comparação de alterações
+    const [originalOpportunityValues, setOriginalOpportunityValues] = React.useState(null);
+
     const opportunityFormik = useFormik({
         initialValues: initialValues || {
             titulo: '',
@@ -202,34 +205,126 @@ export default function OportunidadeFormModal({ isOpen, onClose, onSubmit, initi
             status_vaga: 'ativa',
         },
         validationSchema: opportunityValidationSchema,
-        onSubmit: (values) => onSubmit(values),
+        onSubmit: async (values) => {
+            // Inicia a medição de tempo no clique do botão
+            console.time('Modal Close Time - Desde o Clique do Botão');
+
+            // 2. Lógica de "Nenhuma alteração detectada"
+            if (initialValues?.id) { // Apenas se estiver no modo de edição
+                const cleanCurrentValues = { ...values };
+                const cleanOriginalValues = { ...originalOpportunityValues };
+
+                delete cleanCurrentValues.id;
+                delete cleanOriginalValues.id;
+
+                Object.keys(cleanCurrentValues).forEach(key => {
+                    if (cleanCurrentValues[key] === null || cleanCurrentValues[key] === undefined) {
+                        cleanCurrentValues[key] = '';
+                    }
+                });
+                Object.keys(cleanOriginalValues).forEach(key => {
+                    if (cleanOriginalValues[key] === null || cleanOriginalValues[key] === undefined) {
+                        cleanOriginalValues[key] = '';
+                    }
+                });
+
+                const hasChanges = JSON.stringify(cleanCurrentValues) !== JSON.stringify(cleanOriginalValues);
+
+                if (!hasChanges) {
+                    setFormAlert({ severity: 'info', message: 'Nenhuma alteração detectada.' });
+                    console.log('Nenhuma alteração detectada. Prosseguindo com o salvamento.');
+                } else {
+                    if (formAlert?.severity === 'info' && formAlert?.message === 'Nenhuma alteração detectada.') {
+                         setFormAlert(null);
+                    }
+                }
+            }
+
+            // Ação principal: Submissão da API
+            // Envolver a chamada onSubmit em uma Promise para controlar o tempo
+            const submitApiPromise = onSubmit(values); // Esta função já deve retornar uma Promise
+
+            // Criar uma Promise para o tempo limite do fechamento
+            // Queremos que o modal feche no máximo em 900ms a partir do clique
+            const MIN_CLOSE_TIME_MS = 300; // Tempo mínimo para o modal ficar aberto (feedback visual)
+            const MAX_CLOSE_TIME_MS = 900; // Tempo máximo para o modal fechar desde o clique
+
+            const apiResponseReceivedTime = Date.now(); // Tempo em que a chamada da API foi feita
+
+            try {
+                // Aguarda a resposta da API OU o tempo limite mínimo para fechamento
+                await Promise.race([
+                    submitApiPromise, // Resposta da API
+                    new Promise(resolve => setTimeout(resolve, MIN_CLOSE_TIME_MS)) // Tempo mínimo de exibição
+                ]);
+                console.log('Resposta da API ou tempo mínimo de exibição alcançado.');
+
+                // Calcula quanto tempo se passou desde o clique
+                const timeElapsedSinceClick = Date.now() - console.time('Modal Close Time - Desde o Clique do Botão'); // Re-inicia o timer para obter o elapsed time
+                
+                // Calcula o tempo restante para atingir o MAX_CLOSE_TIME_MS
+                const remainingTimeForMaxClose = MAX_CLOSE_TIME_MS - timeElapsedSinceClick;
+
+                // Garante que o modal feche após um tempo mínimo total, mas não mais que o máximo
+                if (remainingTimeForMaxClose > 0) {
+                    console.log(`Fechando modal em ${remainingTimeForMaxClose}ms para atingir o tempo máximo de 900ms.`);
+                    setTimeout(onClose, remainingTimeForMaxClose);
+                } else {
+                    console.log('Fechando modal imediatamente, tempo máximo já excedido.');
+                    onClose(); // Fecha imediatamente se o tempo já excedeu o máximo
+                }
+
+                console.log('Submissão da API concluída com sucesso.');
+
+            } catch (error) {
+                console.error("Erro ao submeter o formulário (tratado no onSubmit da prop):", error);
+                // Em caso de erro, talvez não queiramos fechar o modal imediatamente para mostrar o erro.
+                // Mas se o objetivo é sempre fechar rápido, podemos fechar aqui também.
+                // Por agora, vamos manter o modal aberto para que o usuário veja a mensagem de erro.
+            } finally {
+                // Termina a medição de tempo total da submissão
+                console.timeEnd('Modal Close Time - Desde o Clique do Botão');
+            }
+        },
         enableReinitialize: true,
     });
 
+    // Efeito para resetar o formulário ou carregar valores iniciais quando o modal abre/fecha
     React.useEffect(() => {
         if (!isOpen) {
             opportunityFormik.resetForm();
-        } else if (initialValues && initialValues.id) {
-            opportunityFormik.setValues({
+            setOriginalOpportunityValues(null); // Limpar os valores originais
+            if (setFormAlert) { // Limpar o alerta ao fechar
+                setFormAlert(null);
+            }
+        } else if (initialValues) {
+            const sanitizedValues = {
                 ...initialValues,
-                // Garantir que os valores de data/hora sejam strings vazias se null/undefined
                 data_inicio: initialValues.data_inicio || '',
                 data_termino: initialValues.data_termino || '',
                 hora_inicio: initialValues.hora_inicio || '',
                 hora_termino: initialValues.hora_termino || '',
-            });
+                num_vagas: initialValues.num_vagas !== null && initialValues.num_vagas !== undefined ? String(initialValues.num_vagas) : '',
+                status_vaga: initialValues.status_vaga || 'ativa',
+            };
+            opportunityFormik.setValues(sanitizedValues);
+            setOriginalOpportunityValues(JSON.parse(JSON.stringify(sanitizedValues)));
         }
     }, [isOpen, initialValues, opportunityFormik.resetForm, opportunityFormik.setValues]);
 
     return (
         <Modal open={isOpen} onClose={onClose} aria-labelledby="modal-title" aria-describedby="modal-description">
             <Box sx={modalStyle}>
-                <IconButton onClick={onClose} sx={{ position: 'absolute', right: 8, top: 8, color: (theme) => theme.palette.grey[500] }}>
+                <IconButton onClick={() => {
+                    console.time('Modal Close Time - Cancel Button'); // Medição ao cancelar
+                    onClose();
+                    console.timeEnd('Modal Close Time - Cancel Button'); // Fim da medição
+                }} sx={{ position: 'absolute', right: 8, top: 8, color: (theme) => theme.palette.grey[500] }}>
                     <CloseIcon />
                 </IconButton>
 
                 <Typography variant="h5" component="h2" gutterBottom>
-                    {initialValues?.id ? 'Editar Ação Voluntária' : 'Cadastrar Nova Ação Voluntária'}
+                    {initialValues?.id ? 'Editar Oportunidade' : 'Cadastrar Nova Oportunidade'}
                 </Typography>
 
                 {formAlert && (
@@ -251,16 +346,18 @@ export default function OportunidadeFormModal({ isOpen, onClose, onSubmit, initi
                                 onChange={opportunityFormik.handleChange}
                                 error={opportunityFormik.touched.ong_nome && Boolean(opportunityFormik.errors.ong_nome)}
                                 helperText={opportunityFormik.touched.ong_nome && opportunityFormik.errors.ong_nome}
+                                disabled={!!initialValues?.id}
+                                InputProps={initialValues?.id ? { readOnly: true } : {}}
                             />
                         </Box>
 
                         <Box>
-                            <Typography variant="subtitle1" gutterBottom>Informações da Ação</Typography>
+                            <Typography variant="subtitle1" gutterBottom>Informações da Oportunidade</Typography>
                             <Divider sx={{ mb: 2 }} />
                             <Stack spacing={2}>
                                 <TextField
                                     fullWidth
-                                    label="Nome da Ação"
+                                    label="Nome da Oportunidade"
                                     name="titulo"
                                     value={opportunityFormik.values.titulo}
                                     onChange={opportunityFormik.handleChange}
@@ -269,10 +366,10 @@ export default function OportunidadeFormModal({ isOpen, onClose, onSubmit, initi
                                 />
 
                                 <FormControl fullWidth error={opportunityFormik.touched.tipo_acao && Boolean(opportunityFormik.errors.tipo_acao)}>
-                                    <InputLabel>Tipo de Ação</InputLabel>
+                                    <InputLabel>Tipo de Oportunidade</InputLabel>
                                     <Select
                                         name="tipo_acao"
-                                        label="Tipo de Ação"
+                                        label="Tipo de Oportunidade"
                                         value={opportunityFormik.values.tipo_acao}
                                         onChange={opportunityFormik.handleChange}
                                     >
@@ -296,7 +393,7 @@ export default function OportunidadeFormModal({ isOpen, onClose, onSubmit, initi
                                     helperText={opportunityFormik.touched.endereco && opportunityFormik.errors.endereco}
                                 />
 
-                                {/* NOVOS CAMPOS DE DATA INÍCIO E DATA TÉRMINO */}
+                                {/* CAMPOS DE DATA INÍCIO E DATA TÉRMINO */}
                                 <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
                                     <TextField
                                         fullWidth
@@ -328,7 +425,7 @@ export default function OportunidadeFormModal({ isOpen, onClose, onSubmit, initi
                                     />
                                 </Box>
 
-                                {/* NOVOS CAMPOS DE HORÁRIO INÍCIO E HORÁRIO TÉRMINO */}
+                                {/* CAMPOS DE HORÁRIO INÍCIO E HORÁRIO TÉRMINO */}
                                 <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
                                     <TextField
                                         fullWidth
@@ -439,13 +536,17 @@ export default function OportunidadeFormModal({ isOpen, onClose, onSubmit, initi
                                     width: '100%',
                                 }}
                             >
-                                {initialValues?.id ? 'Atualizar Ação' : 'Cadastrar Ação'}
+                                {initialValues?.id ? 'Atualizar Oportunidade' : 'Cadastrar Oportunidade'}
                             </Button>
                             {initialValues?.id && (
                                 <Button
                                     variant="outlined"
                                     color="error"
-                                    onClick={onClose}
+                                    onClick={() => {
+                                        console.time('Modal Close Time - Cancel Button'); // Medição ao cancelar
+                                        onClose();
+                                        console.timeEnd('Modal Close Time - Cancel Button'); // Fim da medição
+                                    }}
                                     sx={{ width: '100%' }}
                                 >
                                     Cancelar Edição

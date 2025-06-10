@@ -6,6 +6,10 @@ from typing import List # Essencial para o 'response_model=List[...]'
 from datetime import datetime # Necessário para o tipo datetime em OportunidadeResponse
 
 # Importar os modelos corretos
+# Certifique-se de que OportunidadeONG e OportunidadeUpdate estão definidos corretamente
+# OportunidadeONG para POST (criação)
+# OportunidadeUpdate para PATCH (atualização parcial) - deve ter campos Optional
+# OportunidadeResponse para GET (resposta)
 from ..models import OportunidadeONG, OportunidadeUpdate, OportunidadeResponse
 from ..database import get_connection
 
@@ -121,14 +125,12 @@ async def criar_oportunidade(dados: OportunidadeONG):
                 # que me forneceu anteriormente, podemos tentar criar se não existir.
                 # Considerando o schema.sql que te dei por último, 'ongs' exige 'email' e 'senha'.
                 # Então, o mais seguro é **exigir que a ONG já exista e buscar seu ID**.
-                # Se o frontend realmente manda apenas `ong_nome` e `endereco`, a criação da ONG
-                # deveria ser um endpoint separado (registro de ONG).
+                # Se ela não for encontrada e você tiver o schema com email/senha obrigatórios para ONG,
+                # este INSERT abaixo falharia.
                 
                 # Para prosseguir, vamos assumir que a ONG já deve existir e buscar por nome.
                 # Se ela não for encontrada e você tiver o schema com email/senha obrigatórios para ONG,
                 # este INSERT abaixo falharia.
-                
-                # Se a ONG não existe, este bloco será um problema com o schema mais recente (email e senha NOT NULL)
                 # O mais seguro é que a ONG seja criada ANTES, e você passe o ong_id ou um campo unico como email.
                 # Por ora, mantemos a lógica que tenta buscar/criar, mas ciente da limitação com o novo schema de ONGs.
                 print(f"DEBUG BACKEND: ONG '{dados.ong_nome}' não encontrada. Tentando inserção/duplicata.")
@@ -139,11 +141,11 @@ async def criar_oportunidade(dados: OportunidadeONG):
                 )
                 ong_id = cursor.lastrowid
                 if not ong_id: # Caso não tenha inserido e nem pego ID
-                     cursor.execute("SELECT id FROM ongs WHERE nome = %s", (dados.ong_nome,))
-                     existing_ong_after_insert = cursor.fetchone()
-                     if existing_ong_after_insert:
-                         ong_id = existing_ong_after_insert['id']
-                     else:
+                    cursor.execute("SELECT id FROM ongs WHERE nome = %s", (dados.ong_nome,))
+                    existing_ong_after_insert = cursor.fetchone()
+                    if existing_ong_after_insert:
+                        ong_id = existing_ong_after_insert['id']
+                    else:
                         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erro interno: Não foi possível obter ID da ONG ou criar ONG padrão.")
 
             # Insere a oportunidade com todos os campos
@@ -185,6 +187,11 @@ async def atualizar_oportunidade_completa(oportunidade_id: int, dados: Oportunid
     try:
         conn = get_connection()
         with conn.cursor() as cursor:
+            # Primeiro, verificar se a oportunidade existe (para não confundir 404 com 0 rows updated)
+            cursor.execute("SELECT id FROM oportunidades WHERE id = %s", (oportunidade_id,))
+            if cursor.fetchone() is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Oportunidade não encontrada")
+
             # CORRIGIDO: Inclui novos campos de data e hora no UPDATE
             # REMOVIDO ong_nome do UPDATE, pois não é uma coluna em 'oportunidades'
             cursor.execute(
@@ -201,10 +208,16 @@ async def atualizar_oportunidade_completa(oportunidade_id: int, dados: Oportunid
                 )
             )
             print(f"DEBUG BACKEND: cursor.rowcount após UPDATE: {cursor.rowcount}")
+            
+            # Ajuste crucial: Se cursor.rowcount == 0, significa que nenhum dado foi alterado,
+            # mas a oportunidade EXISTE. Não deve ser um 404.
+            # Podemos retornar sucesso com uma mensagem específica ou apenas sucesso.
             if cursor.rowcount == 0:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Oportunidade não encontrada")
+                conn.commit() # Ainda commitamos para finalizar a transação, mesmo que nada mude
+                return {"success": True, "message": "Nenhuma alteração detectada no banco de dados, mas a operação foi registrada."}
+            
             conn.commit()
-            return {"success": True}
+            return {"success": True, "message": "Oportunidade atualizada com sucesso."}
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -235,7 +248,10 @@ async def atualizar_oportunidade_parcial(oportunidade_id: int, dados: Oportunida
             updates = {k: v for k, v in dados.model_dump(exclude_unset=True).items()}
             
             if not updates:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nenhum campo para atualizar")
+                # Se não há updates no payload, podemos considerar sucesso sem fazer nada no DB
+                # Ou, se o frontend está enviando ong_nome, que é ignorado para a tabela oportunidades
+                # E não há outros campos válidos, ainda podemos retornar sucesso.
+                return {"success": True, "message": "Nenhum campo válido para atualizar no banco de dados ou nenhuma alteração."}
 
             set_clauses = []
             values = []
@@ -250,7 +266,8 @@ async def atualizar_oportunidade_parcial(oportunidade_id: int, dados: Oportunida
                 values.append(value)
             
             if not set_clauses: # Caso só tenha enviado ong_nome e ele foi ignorado
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nenhum campo válido para atualizar")
+                # Se chegou aqui, é porque updates existia, mas set_clauses ficou vazio após ignorar ong_nome
+                return {"success": True, "message": "Nenhum campo válido para atualizar a oportunidade, apenas ong_nome ignorado."}
 
             query = f"UPDATE oportunidades SET {', '.join(set_clauses)} WHERE id = %s"
             values.append(oportunidade_id)
@@ -258,8 +275,15 @@ async def atualizar_oportunidade_parcial(oportunidade_id: int, dados: Oportunida
             print(f"DEBUG BACKEND PATCH: Query gerada: {query}")
             print(f"DEBUG BACKEND PATCH: Valores para query: {tuple(values)}")
             cursor.execute(query, tuple(values))
+            
+            # No PATCH, se rowcount == 0, significa que a oportunidade existe, mas os valores são os mesmos.
+            # Não é um erro, então ainda é um sucesso.
+            if cursor.rowcount == 0:
+                conn.commit() # Commit para finalizar a transação
+                return {"success": True, "message": "Nenhuma alteração detectada no banco de dados para os campos fornecidos."}
+
             conn.commit()
-            return {"success": True}
+            return {"success": True, "message": "Oportunidade atualizada parcialmente com sucesso."}
     except HTTPException as he:
         raise he
     except Exception as e:
