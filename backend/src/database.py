@@ -31,7 +31,8 @@ def get_connection():
         conn = pymysql.connect(
             # Adapte os nomes das variáveis para os que o Railway fornece
             host=os.getenv("MYSQL_HOST"),
-            port=int(os.getenv("MYSQL_PORT")),
+            # Adicione um valor padrão (3306) caso MYSQL_PORT seja None
+            port=int(os.getenv("MYSQL_PORT", 3306)), 
             user=os.getenv("MYSQL_USER"),
             password=os.getenv("MYSQL_PASSWORD"),
             database=os.getenv("MYSQL_DATABASE"), # O nome da variável no Railway é MYSQL_DATABASE
