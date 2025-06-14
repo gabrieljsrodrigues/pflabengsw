@@ -31,7 +31,8 @@ def get_connection():
     try:
         # Certifique-se de que o host está sendo lido diretamente de MYSQL_HOST
         db_host = os.getenv("MYSQL_HOST")
-        db_port = int(os.getenv("MYSQL_PORT", 3306)) # Valor padrão para a porta
+        # Altera o valor padrão para 1986, a porta real do MySQL no Railway
+        db_port = int(os.getenv("MYSQL_PORT", 1986)) 
         db_user = os.getenv("MYSQL_USER")
         db_password = os.getenv("MYSQL_PASSWORD")
         db_name = os.getenv("MYSQL_DATABASE")
