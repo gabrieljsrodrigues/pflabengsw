@@ -12,7 +12,8 @@ def validar_variaveis_ambiente():
     Verifica se todas as variáveis de ambiente necessárias para a conexão com o banco de dados estão definidas.
     Levanta uma exceção se alguma variável estiver faltando.
     """
-    required_vars = ["DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME"]
+    # Mude os nomes das variáveis para os que o Railway fornece (MYSQL_...)
+    required_vars = ["MYSQL_HOST", "MYSQL_PORT", "MYSQL_USER", "MYSQL_PASSWORD", "MYSQL_DATABASE"]
     for var in required_vars:
         if not os.getenv(var):
             raise Exception(f"Variável de ambiente {var} não definida")
@@ -22,13 +23,23 @@ def get_connection():
     Retorna uma conexão PyMySQL com o banco de dados configurado nas variáveis de ambiente.
     Usa DictCursor para que os resultados das consultas (fetchall, fetchone) sejam dicionários (chave-valor).
     """
-    validar_variaveis_ambiente() # Valida as variáveis de ambiente antes de tentar conectar.
-    conn = pymysql.connect(
-        host=os.getenv("DB_HOST"),
-        port=int(os.getenv("DB_PORT")),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD"),
-        database=os.getenv("DB_NAME"),
-        cursorclass=pymysql.cursors.DictCursor
-    )
-    return conn
+    # Remova ou comente esta linha se a validação estiver causando problemas no Railway.
+    # Vamos focar em fazer a conexão principal funcionar primeiro.
+    # validar_variaveis_ambiente() 
+
+    try:
+        conn = pymysql.connect(
+            # Adapte os nomes das variáveis para os que o Railway fornece
+            host=os.getenv("MYSQL_HOST"),
+            port=int(os.getenv("MYSQL_PORT")),
+            user=os.getenv("MYSQL_USER"),
+            password=os.getenv("MYSQL_PASSWORD"),
+            database=os.getenv("MYSQL_DATABASE"), # O nome da variável no Railway é MYSQL_DATABASE
+            cursorclass=pymysql.cursors.DictCursor
+        )
+        return conn
+    except Exception as e:
+        # Imprime o erro para que você possa vê-lo nos logs do Railway
+        print(f"Erro ao conectar ao banco de dados: {e}")
+        # É importante relançar a exceção para que o FastAPI saiba que houve um problema
+        raise e
