@@ -5,7 +5,8 @@ import pymysql
 import pymysql.cursors
 from dotenv import load_dotenv
 
-load_dotenv() # Garante que as variáveis de ambiente sejam carregadas, mesmo que este módulo seja importado separadamente.
+# load_dotenv() # Garante que as variáveis de ambiente sejam carregadas, mesmo que este módulo seja importado separadamente.
+# Comentar load_dotenv() pois o Railway já injeta as variáveis. Pode causar conflito.
 
 def validar_variaveis_ambiente():
     """
@@ -28,14 +29,23 @@ def get_connection():
     # validar_variaveis_ambiente() 
 
     try:
+        # Certifique-se de que o host está sendo lido diretamente de MYSQL_HOST
+        db_host = os.getenv("MYSQL_HOST")
+        db_port = int(os.getenv("MYSQL_PORT", 3306)) # Valor padrão para a porta
+        db_user = os.getenv("MYSQL_USER")
+        db_password = os.getenv("MYSQL_PASSWORD")
+        db_name = os.getenv("MYSQL_DATABASE")
+
+        # Verifica se alguma variável crítica ainda é None
+        if not all([db_host, db_user, db_password, db_name]):
+            raise Exception("Uma ou mais variáveis de ambiente do MySQL (host, user, password, database) não foram encontradas ou estão vazias.")
+
         conn = pymysql.connect(
-            # Adapte os nomes das variáveis para os que o Railway fornece
-            host=os.getenv("MYSQL_HOST"),
-            # Adicione um valor padrão (3306) caso MYSQL_PORT seja None
-            port=int(os.getenv("MYSQL_PORT", 3306)), 
-            user=os.getenv("MYSQL_USER"),
-            password=os.getenv("MYSQL_PASSWORD"),
-            database=os.getenv("MYSQL_DATABASE"), # O nome da variável no Railway é MYSQL_DATABASE
+            host=db_host,
+            port=db_port,
+            user=db_user,
+            password=db_password,
+            database=db_name,
             cursorclass=pymysql.cursors.DictCursor
         )
         return conn
